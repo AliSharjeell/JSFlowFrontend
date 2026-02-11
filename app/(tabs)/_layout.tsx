@@ -13,7 +13,6 @@ export default function TabLayout() {
                 tabBarActiveTintColor: Colors.primary,
                 tabBarInactiveTintColor: Colors.textSecondary,
                 tabBarLabelStyle: styles.tabLabel,
-                tabBarItemStyle: styles.tabItem,
             }}
         >
             <Tabs.Screen
@@ -21,7 +20,7 @@ export default function TabLayout() {
                 options={{
                     title: 'Home',
                     tabBarIcon: ({ color, focused }) => (
-                        <View style={focused ? styles.activeIconWrap : undefined}>
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
                             <Ionicons
                                 name={focused ? 'home' : 'home-outline'}
                                 size={22}
@@ -36,7 +35,7 @@ export default function TabLayout() {
                 options={{
                     title: 'AI Assistant',
                     tabBarIcon: ({ color, focused }) => (
-                        <View style={focused ? styles.activeIconWrap : undefined}>
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
                             <Ionicons
                                 name={focused ? 'sparkles' : 'sparkles-outline'}
                                 size={22}
@@ -62,22 +61,20 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.06,
         shadowRadius: 12,
         elevation: 8,
-        overflow: 'visible' as const,
     },
     tabLabel: {
         fontFamily: Fonts.medium,
         fontSize: 11,
-        marginTop: 2,
+        marginTop: 4,
     },
-    tabItem: {
-        gap: 2,
-        overflow: 'visible' as const,
+    iconContainer: {
+        width: 48,
+        height: 30,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 15,
     },
-    activeIconWrap: {
+    activeIconContainer: {
         backgroundColor: '#EBF3FF',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 3,
-        overflow: 'visible' as const,
     },
 });
