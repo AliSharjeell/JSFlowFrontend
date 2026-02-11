@@ -1,19 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, TextInput,
-    ActivityIndicator, Alert, ScrollView, KeyboardAvoidingView, Platform, Image
+    ActivityIndicator, Alert,
+    Image,
+    KeyboardAvoidingView, Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
+import Animated, {
+    FadeIn,
+    FadeInDown,
+    useAnimatedStyle, useSharedValue, withRepeat, withTiming
+} from 'react-native-reanimated';
+import { Waveform } from '../../components/Waveform';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import Animated, {
-    useAnimatedStyle, useSharedValue, withRepeat, withTiming,
-    FadeInDown, FadeIn
-} from 'react-native-reanimated';
-import { Audio } from 'expo-av';
 import { AgentService } from '../../services/api';
-import { Waveform } from '../../components/Waveform';
 import { GroqService } from '../../services/groq';
 
 type AssistantStatus = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -202,6 +210,15 @@ export default function AssistantScreen() {
         }
     };
 
+    const cleanTextForTTS = (text: string) => {
+        return text
+            .replace(/\|.*?\|/g, '') // Remove table rows
+            .replace(/[*#`_~-]/g, '') // Remove markdown formatting chars
+            .replace(/\n\s*\n/g, '. ') // Replace double newlines with pauses
+            .replace(/\s+/g, ' ') // Collapse whitespace
+            .trim();
+    };
+
     const speakResponse = async (text: string) => {
         setStatus('speaking');
         try {
@@ -210,7 +227,16 @@ export default function AssistantScreen() {
                 playsInSilentModeIOS: true,
             });
 
-            const audioUri = await GroqService.textToSpeech(text);
+            // Sanitize text for TTS to avoid 400 errors from special chars/markdown
+            const safeText = cleanTextForTTS(text);
+            console.log('🗣️ Speaking:', safeText.substring(0, 50) + '...');
+
+            if (!safeText) {
+                setStatus('idle');
+                return;
+            }
+
+            const audioUri = await GroqService.textToSpeech(safeText);
 
             const { sound: newSound } = await Audio.Sound.createAsync(
                 { uri: audioUri },

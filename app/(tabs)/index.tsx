@@ -1,40 +1,106 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, FlatList } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    Image,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { BalanceCard } from '../../components/BalanceCard';
+import { QuickActions } from '../../components/QuickActions';
+import { TransactionItem } from '../../components/TransactionItem';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
-import { MockNeonDB, UserData } from '../../services/mockNeonDB';
-import { PremiumCard } from '../../components/PremiumCard';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { BalanceData, BankingApi, SpendingAnalytics, Transaction } from '../../services/bankingApi';
 
 export default function Dashboard() {
-    const [userData, setUserData] = useState<UserData | null>(null);
+    const router = useRouter();
+    const [balance, setBalance] = useState<BalanceData | null>(null);
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [analytics, setAnalytics] = useState<SpendingAnalytics | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        MockNeonDB.getUserData().then(setUserData);
+    const fetchData = useCallback(async () => {
+        try {
+            setError(null);
+            const [bal, txn, spend] = await Promise.all([
+                BankingApi.getBalance().catch((e) => { console.log('❌ Balance error:', e?.message, e?.response?.status, e?.response?.data); return null; }),
+                BankingApi.getTransactions(8).catch((e) => { console.log('❌ Transactions error:', e?.message, e?.response?.status, e?.response?.data); return []; }),
+                BankingApi.getSpendingAnalytics('last_month').catch((e) => { console.log('❌ Analytics error:', e?.message, e?.response?.status, e?.response?.data); return null; }),
+            ]);
+            console.log('📦 Balance response:', JSON.stringify(bal));
+            console.log('📦 Transactions response:', JSON.stringify(txn));
+            console.log('📦 Analytics response:', JSON.stringify(spend));
+            if (bal) setBalance(bal);
+            if (Array.isArray(txn)) setTransactions(txn);
+            if (spend) setAnalytics(spend);
+        } catch (e: any) {
+            setError('Could not connect to bank. Pull down to retry.');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
     }, []);
 
-    const renderTransaction = ({ item, index }: { item: any, index: number }) => (
-        <Animated.View entering={FadeInDown.delay(index * 100).springify()}>
-            <PremiumCard style={styles.transactionCard}>
-                <View style={styles.transactionIcon}>
-                    <Ionicons
-                        name={item.type === 'credit' ? 'arrow-down' : 'arrow-up'}
-                        size={24}
-                        color={item.type === 'credit' ? Colors.success : Colors.error}
-                    />
-                </View>
-                <View style={styles.transactionDetails}>
-                    <Text style={styles.transactionTitle}>{item.description}</Text>
-                    <Text style={styles.transactionDate}>{item.date}</Text>
-                </View>
-                <Text style={[styles.transactionAmount, { color: item.type === 'credit' ? Colors.success : Colors.text }]}>
-                    {item.type === 'credit' ? '+' : '-'} {userData?.currency} {item.amount.toLocaleString()}
-                </Text>
-            </PremiumCard>
-        </Animated.View>
-    );
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        fetchData();
+    }, [fetchData]);
+
+    const getGreeting = () => {
+        const h = new Date().getHours();
+        if (h < 12) return 'Good Morning';
+        if (h < 17) return 'Good Afternoon';
+        return 'Good Evening';
+    };
+
+    const quickActions = [
+        {
+            label: 'Send',
+            icon: 'paper-plane-outline' as keyof typeof Ionicons.glyphMap,
+            onPress: () => router.push('/(tabs)/payments'),
+            color: Colors.primary,
+        },
+        {
+            label: 'Cards',
+            icon: 'card-outline' as keyof typeof Ionicons.glyphMap,
+            onPress: () => router.push('/(tabs)/cards'),
+            color: '#8B5CF6',
+        },
+        {
+            label: 'Bills',
+            icon: 'receipt-outline' as keyof typeof Ionicons.glyphMap,
+            onPress: () => router.push('/(tabs)/payments'),
+            color: Colors.tertiary2,
+        },
+        {
+            label: 'Analytics',
+            icon: 'pie-chart-outline' as keyof typeof Ionicons.glyphMap,
+            onPress: () => { },
+            color: Colors.success,
+        },
+    ];
+
+    if (loading) {
+        return (
+            <View style={[styles.container, styles.center]}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.loadingText}>Loading your dashboard...</Text>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -49,68 +115,106 @@ export default function Dashboard() {
                 </View>
                 <View style={styles.headerRight}>
                     <View>
-                        <Text style={styles.greeting}>Good Morning,</Text>
-                        <Text style={styles.username}>{userData?.name || 'User'}</Text>
+                        <Text style={styles.greeting}>{getGreeting()},</Text>
+                        <Text style={styles.username}>
+                            User
+                        </Text>
                     </View>
                     <TouchableOpacity style={styles.profileButton}>
-                        <Ionicons name="person-circle-outline" size={40} color={Colors.primary} />
+                        <View style={styles.avatarCircle}>
+                            <Text style={styles.avatarText}>
+                                U
+                            </Text>
+                        </View>
                     </TouchableOpacity>
                 </View>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                {/* Balance Card */}
-                <Animated.View entering={FadeInDown.springify()}>
-                    <LinearGradient
-                        colors={[Colors.primary, '#1e4b8f']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.balanceCard}
-                    >
-                        <Text style={styles.balanceLabel}>Total Balance</Text>
-                        <Text style={styles.balanceAmount}>
-                            {userData ? `${userData.currency} ${userData.balance.toLocaleString()}` : 'Loading...'}
-                        </Text>
-                        <View style={styles.cardFooter}>
-                            <Text style={styles.cardFooterText}>**** **** **** 1234</Text>
-                            <Text style={styles.cardFooterText}>09/28</Text>
-                        </View>
-                    </LinearGradient>
-                </Animated.View>
-
-                {/* Shortcuts */}
-                <View style={styles.shortcutsContainer}>
-                    {['Send', 'Request', 'Bills', 'More'].map((action, index) => (
-                        <Animated.View key={action} entering={FadeInDown.delay(index * 100).springify()} style={styles.shortcutWrapper}>
-                            <TouchableOpacity style={styles.shortcutButton}>
-                                <Ionicons
-                                    name={
-                                        action === 'Send' ? 'paper-plane-outline' :
-                                            action === 'Request' ? 'download-outline' :
-                                                action === 'Bills' ? 'receipt-outline' : 'grid-outline'
-                                    }
-                                    size={24}
-                                    color={Colors.primary}
-                                />
-                            </TouchableOpacity>
-                            <Text style={styles.shortcutLabel}>{action}</Text>
-                        </Animated.View>
-                    ))}
-                </View>
-
-                {/* Recent Transactions */}
-                <Text style={styles.sectionTitle}>Recent Transactions</Text>
-                {userData ? (
-                    userData.recentTransactions.map((item, index) => (
-                        <View key={item.id}>
-                            {renderTransaction({ item, index })}
-                        </View>
-                    ))
-                ) : (
-                    <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.textSecondary }}>Loading transactions...</Text>
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={Colors.primary}
+                        colors={[Colors.primary]}
+                    />
+                }
+            >
+                {error && (
+                    <Animated.View entering={FadeInDown} style={styles.errorBanner}>
+                        <Ionicons name="cloud-offline-outline" size={18} color={Colors.error} />
+                        <Text style={styles.errorText}>{error}</Text>
+                    </Animated.View>
                 )}
 
-                <View style={{ height: 20 }} />
+                {/* Balance Card */}
+                <BalanceCard
+                    balance={balance?.ledger_balance ?? null}
+                    availableBalance={balance?.available_balance}
+                    currency={balance?.currency || 'PKR'}
+                    accountNumber={balance?.account_id}
+                    status={balance?.status}
+                />
+
+                {/* Quick Actions */}
+                <QuickActions actions={quickActions} />
+
+                {/* Spending Summary */}
+                {analytics && (
+                    <Animated.View entering={FadeInDown.delay(100).springify()}>
+                        <View style={styles.spendingSummary}>
+                            <Text style={styles.sectionTitle}>This Month</Text>
+                            <View style={styles.spendingRow}>
+                                <View style={styles.spendingItem}>
+                                    <Text style={styles.spendingLabel}>Spent</Text>
+                                    <Text style={[styles.spendingValue, { color: Colors.tertiary2 }]}>
+                                        {balance?.currency || 'PKR'} {analytics.total_spend?.toLocaleString() || '0'}
+                                    </Text>
+                                </View>
+                                <View style={styles.spendingDivider} />
+                                <View style={styles.spendingItem}>
+                                    <Text style={styles.spendingLabel}>Top Category</Text>
+                                    <Text style={[styles.spendingValue, { color: Colors.primary, fontSize: 16 }]}>
+                                        {analytics.top_category ? analytics.top_category.charAt(0).toUpperCase() + analytics.top_category.slice(1) : '-'}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+                    </Animated.View>
+                )}
+
+                {/* Recent Transactions */}
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Recent Transactions</Text>
+                    <TouchableOpacity>
+                        <Text style={styles.seeAll}>See All</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {transactions.length > 0 ? (
+                    transactions.map((txn, index) => (
+                        <TransactionItem
+                            key={txn.id || index}
+                            description={txn.recipient_name || txn.category}
+                            amount={txn.amount}
+                            date={txn.date}
+                            type={txn.type}
+                            category={txn.category}
+                            currency={balance?.currency || 'PKR'}
+                            index={index}
+                            status={txn.status}
+                        />
+                    ))
+                ) : (
+                    <View style={styles.emptyState}>
+                        <Ionicons name="receipt-outline" size={48} color={Colors.border} />
+                        <Text style={styles.emptyText}>No recent transactions</Text>
+                    </View>
+                )}
+
+                <View style={{ height: 24 }} />
             </ScrollView>
         </View>
     );
@@ -121,6 +225,16 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: Colors.background,
         paddingTop: 60,
+    },
+    center: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingText: {
+        fontFamily: Fonts.medium,
+        fontSize: 15,
+        color: Colors.textSecondary,
+        marginTop: 16,
     },
     header: {
         paddingHorizontal: 20,
@@ -149,105 +263,92 @@ const styles = StyleSheet.create({
         color: Colors.text,
     },
     profileButton: {
-        padding: 5,
+        padding: 2,
+    },
+    avatarCircle: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: Colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    avatarText: {
+        fontFamily: Fonts.bold,
+        fontSize: 18,
+        color: Colors.white,
     },
     scrollContent: {
         paddingHorizontal: 20,
         paddingBottom: 20,
     },
-    balanceCard: {
-        borderRadius: 20,
-        padding: 25,
-        marginBottom: 30,
-        shadowColor: Colors.primary,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.3,
-        shadowRadius: 20,
-        elevation: 10,
-    },
-    balanceLabel: {
-        color: 'rgba(255,255,255,0.8)',
-        fontFamily: Fonts.body,
-        fontSize: 14,
-        marginBottom: 10,
-    },
-    balanceAmount: {
-        color: 'white',
-        fontFamily: Fonts.bold,
-        fontSize: 36,
-        marginBottom: 20,
-    },
-    cardFooter: {
+    errorBanner: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    cardFooterText: {
-        color: 'rgba(255,255,255,0.8)',
-        fontFamily: Fonts.medium,
-    },
-    shortcutsContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 30,
-    },
-    shortcutWrapper: {
         alignItems: 'center',
+        backgroundColor: '#FEF2F2',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 16,
+        gap: 8,
     },
-    shortcutButton: {
-        width: 60,
-        height: 60,
-        borderRadius: 20,
+    errorText: {
+        fontFamily: Fonts.medium,
+        fontSize: 13,
+        color: Colors.error,
+        flex: 1,
+    },
+    spendingSummary: {
         backgroundColor: Colors.surface,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 5,
-        elevation: 2,
+        borderRadius: 16,
+        padding: 18,
+        marginBottom: 24,
     },
-    shortcutLabel: {
-        fontFamily: Fonts.medium,
-        fontSize: 12,
-        color: Colors.text,
+    spendingRow: {
+        flexDirection: 'row',
+        marginTop: 12,
+    },
+    spendingItem: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    spendingDivider: {
+        width: 1,
+        backgroundColor: Colors.border,
+    },
+    spendingLabel: {
+        fontFamily: Fonts.body,
+        fontSize: 13,
+        color: Colors.textSecondary,
+        marginBottom: 4,
+    },
+    spendingValue: {
+        fontFamily: Fonts.bold,
+        fontSize: 18,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 14,
     },
     sectionTitle: {
         fontFamily: Fonts.bold,
-        fontSize: 20,
+        fontSize: 19,
         color: Colors.text,
-        marginBottom: 15,
     },
-    transactionCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 15,
-    },
-    transactionIcon: {
-        width: 45,
-        height: 45,
-        borderRadius: 12,
-        backgroundColor: Colors.surface,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 15,
-    },
-    transactionDetails: {
-        flex: 1,
-    },
-    transactionTitle: {
+    seeAll: {
         fontFamily: Fonts.medium,
-        fontSize: 16,
-        color: Colors.text,
-        marginBottom: 4,
+        fontSize: 14,
+        color: Colors.primary,
     },
-    transactionDate: {
-        fontFamily: Fonts.body,
-        fontSize: 12,
+    emptyState: {
+        alignItems: 'center',
+        paddingVertical: 40,
+    },
+    emptyText: {
+        fontFamily: Fonts.medium,
+        fontSize: 14,
         color: Colors.textSecondary,
-    },
-    transactionAmount: {
-        fontFamily: Fonts.bold,
-        fontSize: 16,
+        marginTop: 12,
     },
 });

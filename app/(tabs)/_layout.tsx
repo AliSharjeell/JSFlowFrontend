@@ -1,8 +1,8 @@
-import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Tabs } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
-import { StyleSheet, View } from 'react-native';
 
 export default function TabLayout() {
     return (
@@ -23,6 +23,36 @@ export default function TabLayout() {
                         <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
                             <Ionicons
                                 name={focused ? 'home' : 'home-outline'}
+                                size={22}
+                                color={color}
+                            />
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="cards"
+                options={{
+                    title: 'Cards',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
+                            <Ionicons
+                                name={focused ? 'card' : 'card-outline'}
+                                size={22}
+                                color={color}
+                            />
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="payments"
+                options={{
+                    title: 'Payments',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
+                            <Ionicons
+                                name={focused ? 'swap-horizontal' : 'swap-horizontal-outline'}
                                 size={22}
                                 color={color}
                             />

@@ -4,7 +4,7 @@ import axios from 'axios';
 // If using Android Emulator use 'http://10.0.2.2:8000'
 // If using iOS Simulator use 'http://localhost:8000'
 // If using physical device, use your machine's IP address.
-const API_URL = 'http://10.0.2.2:8000';
+const API_URL = 'https://ltgnx8hv-8001.inc1.devtunnels.ms';
 
 const api = axios.create({
     baseURL: API_URL,

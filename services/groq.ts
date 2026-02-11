@@ -1,6 +1,6 @@
 import axios from 'axios';
+import { File as ExpoFile, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
-import { Paths, File as ExpoFile } from 'expo-file-system';
 
 const GROQ_API_KEY = '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';
 
@@ -95,7 +95,8 @@ export const GroqService = {
 
             return outputFile.uri;
         } catch (error: any) {
-            console.error('Groq TTS Error:', error?.response?.data || error.message);
+            console.error('Groq TTS Error Details:', JSON.stringify(error?.response?.data || {}, null, 2));
+            console.error('Groq TTS Error Message:', error.message);
             throw error;
         }
     },
