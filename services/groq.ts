@@ -66,7 +66,7 @@ export const GroqService = {
             const response = await axios.post(
                 `${GROQ_BASE}/audio/speech`,
                 {
-                    model: 'playai-tts',
+                    model: 'canopylabs/orpheus-v1-english',
                     input: text,
                     voice: 'Fritz-PlayAI',
                     response_format: 'wav',

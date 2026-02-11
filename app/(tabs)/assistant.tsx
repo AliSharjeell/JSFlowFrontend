@@ -22,6 +22,7 @@ import { Waveform } from '../../components/Waveform';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
 import { AgentService } from '../../services/api';
+import { BackendTTSService } from '../../services/backend_tts';
 import { GroqService } from '../../services/groq';
 
 type AssistantStatus = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -236,7 +237,9 @@ export default function AssistantScreen() {
                 return;
             }
 
-            const audioUri = await GroqService.textToSpeech(safeText);
+            // Use the Backend DevTunnel URL directly
+            // note: textToSpeech implies fetching, here we just get the URL
+            const audioUri = BackendTTSService.getTTSUrl(safeText);
 
             const { sound: newSound } = await Audio.Sound.createAsync(
                 { uri: audioUri },
