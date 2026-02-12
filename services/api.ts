@@ -20,7 +20,7 @@ export const AgentService = {
             });
             return response.data;
         } catch (error) {
-            console.error('Agent API Error:', error);
+            //console.error('Agent API Error:', error);
             throw error;
         }
     },

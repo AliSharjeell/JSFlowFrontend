@@ -204,6 +204,11 @@ export const BankingApi = {
     },
 
     // ── Cards ──
+    getCards: async (): Promise<VirtualCard[]> => {
+        const { data } = await client.get('/cards');
+        return Array.isArray(data) ? data : data?.data ?? [];
+    },
+
     createVirtualCard: async (label: string, limit: number, pin: string): Promise<VirtualCard> => {
         const { data } = await client.post('/cards/virtual', { label, limit, pin });
         return data;

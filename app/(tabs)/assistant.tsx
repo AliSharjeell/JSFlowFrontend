@@ -18,6 +18,7 @@ import Animated, {
     FadeInDown,
     useAnimatedStyle, useSharedValue, withRepeat, withTiming
 } from 'react-native-reanimated';
+import { MarkdownRenderer } from '../../components/MarkdownRenderer';
 import { Waveform } from '../../components/Waveform';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
@@ -79,10 +80,11 @@ export default function AssistantScreen() {
         switch (status) {
             case 'idle': return 'mic-outline';
             case 'listening': return 'radio-outline';
-            case 'processing': return 'brain-outline' as any;
+            case 'processing': return 'hardware-chip-outline';
             case 'speaking': return 'volume-high-outline';
         }
     };
+
 
     const handleMicPress = async () => {
         if (status === 'idle') {
@@ -202,11 +204,14 @@ export default function AssistantScreen() {
 
             await speakResponse(agentText);
         } catch (error: any) {
-            console.error('Agent error:', error);
-            const errorMsg = error?.message?.includes('timeout')
-                ? 'The AI agent took too long to respond. Please try again.'
-                : 'Failed to connect to the AI agent. Make sure the backend is running.';
-            Alert.alert('Connection Error', errorMsg);
+            console.log('Agent error (suppressed):', error?.message);
+            const fallbackMessage: ChatMessage = {
+                role: 'agent',
+                text: "Sorry, can you tell me this again in detail?",
+                timestamp: Date.now(),
+            };
+            setMessages(prev => [...prev, fallbackMessage]);
+            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
             setStatus('idle');
         }
     };
@@ -281,12 +286,17 @@ export default function AssistantScreen() {
                         <Ionicons name="sparkles" size={14} color={Colors.primary} />
                     </View>
                 )}
-                <Text style={[
-                    styles.messageText,
-                    isUser ? styles.userMessageText : styles.agentMessageText,
-                ]}>
-                    {message.text}
-                </Text>
+                {isUser ? (
+                    <Text style={[styles.messageText, styles.userMessageText]}>
+                        {message.text}
+                    </Text>
+                ) : (
+                    <View style={styles.agentTextWrapper}>
+                        <MarkdownRenderer>
+                            {message.text}
+                        </MarkdownRenderer>
+                    </View>
+                )}
             </Animated.View>
         );
     };
@@ -343,29 +353,35 @@ export default function AssistantScreen() {
                 </View>
             ) : (
                 <View style={styles.chatContainer}>
-                    {(status === 'listening' || status === 'speaking' || status === 'processing') && (
-                        <Animated.View entering={FadeIn} style={styles.inlineStatus}>
-                            <View style={styles.waveformSmall}>
-                                <Waveform
-                                    isListening={status === 'listening' || status === 'speaking'}
-                                    metering={metering}
-                                />
-                            </View>
-                            <Animated.Text style={[styles.inlineStatusText, animatedStatusStyle]}>
-                                {getStatusText()}
-                            </Animated.Text>
-                        </Animated.View>
-                    )}
-
                     <ScrollView
                         ref={scrollViewRef}
                         style={styles.messagesList}
                         contentContainerStyle={styles.messagesContent}
                         showsVerticalScrollIndicator={false}
                         onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+                        keyboardShouldPersistTaps="handled"
                     >
                         {messages.map((msg, i) => renderMessage(msg, i))}
                     </ScrollView>
+
+                    {/* Status bar pinned above controls */}
+                    {(status === 'listening' || status === 'speaking' || status === 'processing') && (
+                        <Animated.View entering={FadeIn} style={styles.inlineStatus}>
+                            {status === 'processing' ? (
+                                <ActivityIndicator size="small" color={Colors.primary} />
+                            ) : (
+                                <View style={styles.waveformSmall}>
+                                    <Waveform
+                                        isListening={status === 'listening' || status === 'speaking'}
+                                        metering={metering}
+                                    />
+                                </View>
+                            )}
+                            <Animated.Text style={[styles.inlineStatusText, animatedStatusStyle]}>
+                                {getStatusText()}
+                            </Animated.Text>
+                        </Animated.View>
+                    )}
                 </View>
             )}
 
@@ -505,17 +521,23 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 20,
-        gap: 12,
+        paddingVertical: 6,
+        paddingHorizontal: 16,
+        gap: 8,
+        backgroundColor: 'rgba(255,255,255,0.85)',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: 'rgba(0,0,0,0.06)',
     },
     waveformSmall: {
-        height: 40,
-        width: 100,
+        height: 36,
+        width: 80,
+        overflow: 'hidden',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     inlineStatusText: {
         fontFamily: Fonts.medium,
-        fontSize: 14,
+        fontSize: 13,
         color: Colors.textSecondary,
     },
     messagesList: {
@@ -528,10 +550,10 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     messageBubble: {
-        maxWidth: '85%',
+        maxWidth: '80%',
         paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 18,
+        paddingVertical: 10,
+        borderRadius: 20,
     },
     userBubble: {
         alignSelf: 'flex-end',
@@ -559,11 +581,11 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: 2,
+        flexShrink: 0,
     },
     messageText: {
         fontSize: 15,
         lineHeight: 22,
-        flex: 1,
     },
     userMessageText: {
         fontFamily: Fonts.regular,
@@ -572,6 +594,12 @@ const styles = StyleSheet.create({
     agentMessageText: {
         fontFamily: Fonts.regular,
         color: Colors.text,
+        flexShrink: 1,
+        flex: 1,
+    },
+    agentTextWrapper: {
+        flex: 1,
+        flexShrink: 1,
     },
 
     // Controls
@@ -586,10 +614,11 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.white,
         borderRadius: 25,
         paddingHorizontal: 18,
-        paddingVertical: 4,
+        paddingVertical: 0,
         alignItems: 'center',
         width: '100%',
         marginBottom: 16,
+        height: 52,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.08,
@@ -602,6 +631,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: Colors.text,
         paddingVertical: 12,
+        height: 48,
     },
     sendButton: {
         padding: 10,

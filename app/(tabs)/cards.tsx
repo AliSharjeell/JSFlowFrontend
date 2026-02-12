@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -33,6 +33,8 @@ export default function CardsScreen() {
     const [limit, setLimit] = useState('');
     const [creating, setCreating] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [showPinModal, setShowPinModal] = useState(false);
     const [showLimitModal, setShowLimitModal] = useState(false);
     const [selectedCard, setSelectedCard] = useState<VirtualCard | null>(null);
@@ -48,10 +50,35 @@ export default function CardsScreen() {
     const [showActionModal, setShowActionModal] = useState(false);
     const [pendingAction, setPendingAction] = useState<'freeze' | 'unfreeze' | null>(null);
 
+    const fetchData = useCallback(async () => {
+        try {
+            setError(null);
+            const fetchedCards = await BankingApi.getCards().catch((e) => {
+                console.log('\u274c Cards error:', e?.message, e?.response?.status, e?.response?.data);
+                return null;
+            });
+            console.log('\ud83d\udce6 Cards response:', JSON.stringify(fetchedCards));
+            if (fetchedCards === null) {
+                setError('Could not load cards. Pull down to retry.');
+            } else if (Array.isArray(fetchedCards)) {
+                setCards(fetchedCards);
+            }
+        } catch (e: any) {
+            setError('Could not load cards. Pull down to retry.');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        setTimeout(() => setRefreshing(false), 500);
-    }, []);
+        fetchData();
+    }, [fetchData]);
 
     const handleCreateCard = async () => {
         if (!label.trim()) { Alert.alert('Missing', 'Please enter a card label.'); return; }
@@ -143,9 +170,12 @@ export default function CardsScreen() {
         }
     };
 
+    const activeCount = cards.filter(c => c.status?.toLowerCase() === 'active').length;
+    const frozenCount = cards.filter(c => c.status?.toLowerCase() === 'frozen').length;
+
     const renderCard = (card: VirtualCard, index: number) => {
         const gradient = CARD_GRADIENTS[index % CARD_GRADIENTS.length];
-        const isFrozen = card.status === 'frozen';
+        const isFrozen = card.status?.toLowerCase() === 'frozen';
 
         return (
             <Animated.View
@@ -158,16 +188,28 @@ export default function CardsScreen() {
                     end={{ x: 1, y: 1 }}
                     style={styles.virtualCard}
                 >
-                    {isFrozen && (
-                        <View style={styles.frozenBadge}>
-                            <Ionicons name="snow-outline" size={12} color="#fff" />
-                            <Text style={styles.frozenText}>Frozen</Text>
+                    {/* Decorative chip icon */}
+                    <View style={styles.chipIcon}>
+                        <View style={styles.chipOuter}>
+                            <View style={styles.chipInner} />
                         </View>
-                    )}
+                    </View>
+
+                    {/* Status badge */}
+                    <View style={[styles.statusBadge, isFrozen ? styles.frozenBadge : styles.activeBadge]}>
+                        <Ionicons
+                            name={isFrozen ? 'snow-outline' : 'checkmark-circle-outline'}
+                            size={12}
+                            color="#fff"
+                        />
+                        <Text style={styles.statusBadgeText}>
+                            {isFrozen ? 'Frozen' : 'Active'}
+                        </Text>
+                    </View>
 
                     <View style={styles.cardHeader}>
                         <Text style={styles.cardLabel}>{card.label}</Text>
-                        <Ionicons name="card" size={28} color="rgba(255,255,255,0.4)" />
+                        <Ionicons name="card" size={28} color="rgba(255,255,255,0.3)" />
                     </View>
 
                     <Text style={styles.cardPan}>{card.pan || '**** **** **** ****'}</Text>
@@ -181,10 +223,10 @@ export default function CardsScreen() {
                             <Text style={styles.cardDetailLabel}>CVV</Text>
                             <Text style={styles.cardDetailValue}>{card.cvv || '***'}</Text>
                         </View>
-                        <View>
+                        <View style={{ alignItems: 'flex-end' }}>
                             <Text style={styles.cardDetailLabel}>LIMIT</Text>
                             <Text style={styles.cardDetailValue}>
-                                PKR {card.limit?.toLocaleString() || '0'}
+                                PKR {(card.spend_limit ?? (card as any).limit)?.toLocaleString() || '0'}
                             </Text>
                         </View>
                     </View>
@@ -239,6 +281,15 @@ export default function CardsScreen() {
         );
     };
 
+    if (loading) {
+        return (
+            <View style={[styles.container, styles.center]}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.loadingText}>Loading your cards...</Text>
+            </View>
+        );
+    }
+
     return (
         <View style={styles.container}>
             {/* Header */}
@@ -264,6 +315,12 @@ export default function CardsScreen() {
                     />
                 }
             >
+                {error && (
+                    <Animated.View entering={FadeInDown} style={styles.errorBanner}>
+                        <Ionicons name="cloud-offline-outline" size={18} color={Colors.error} />
+                        <Text style={styles.errorText}>{error}</Text>
+                    </Animated.View>
+                )}
                 {cards.length === 0 ? (
                     <View style={styles.emptyState}>
                         <Animated.View entering={FadeIn} style={styles.emptyIcon}>
@@ -287,7 +344,26 @@ export default function CardsScreen() {
                         </TouchableOpacity>
                     </View>
                 ) : (
-                    cards.map((card, index) => renderCard(card, index))
+                    <View>
+                        {/* Cards Summary Strip */}
+                        <Animated.View key="summary" entering={FadeInDown.delay(50).springify()} style={styles.summaryStrip}>
+                            <View style={styles.summaryItem}>
+                                <Text style={styles.summaryValue}>{cards.length}</Text>
+                                <Text style={styles.summaryLabel}>Total</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryItem}>
+                                <Text style={[styles.summaryValue, { color: Colors.success }]}>{activeCount}</Text>
+                                <Text style={styles.summaryLabel}>Active</Text>
+                            </View>
+                            <View style={styles.summaryDivider} />
+                            <View style={styles.summaryItem}>
+                                <Text style={[styles.summaryValue, { color: '#9CA3AF' }]}>{frozenCount}</Text>
+                                <Text style={styles.summaryLabel}>Frozen</Text>
+                            </View>
+                        </Animated.View>
+                        {cards.map((card, index) => renderCard(card, index))}
+                    </View>
                 )}
 
                 <View style={{ height: 24 }} />
@@ -524,6 +600,31 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.background,
         paddingTop: 60,
     },
+    center: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingText: {
+        fontFamily: Fonts.medium,
+        fontSize: 15,
+        color: Colors.textSecondary,
+        marginTop: 16,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FEF2F2',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 16,
+        gap: 8,
+    },
+    errorText: {
+        fontFamily: Fonts.medium,
+        fontSize: 13,
+        color: Colors.error,
+        flex: 1,
+    },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -558,21 +659,80 @@ const styles = StyleSheet.create({
         shadowRadius: 16,
         elevation: 8,
     },
-    frozenBadge: {
+    // Decorative chip
+    chipIcon: {
+        position: 'absolute',
+        top: 22,
+        left: 22,
+    },
+    chipOuter: {
+        width: 36,
+        height: 26,
+        borderRadius: 5,
+        backgroundColor: 'rgba(255,255,255,0.25)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    chipInner: {
+        width: 18,
+        height: 12,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    // Status badge
+    statusBadge: {
         flexDirection: 'row',
         alignItems: 'center',
         alignSelf: 'flex-end',
-        backgroundColor: 'rgba(0,0,0,0.25)',
         borderRadius: 10,
         paddingHorizontal: 10,
         paddingVertical: 4,
         gap: 4,
         marginBottom: 6,
     },
-    frozenText: {
+    frozenBadge: {
+        backgroundColor: 'rgba(0,0,0,0.25)',
+    },
+    activeBadge: {
+        backgroundColor: 'rgba(255,255,255,0.2)',
+    },
+    statusBadgeText: {
         color: '#fff',
         fontFamily: Fonts.medium,
         fontSize: 11,
+    },
+    // Summary strip
+    summaryStrip: {
+        flexDirection: 'row',
+        backgroundColor: Colors.surface,
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 20,
+        alignItems: 'center',
+    },
+    summaryItem: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    summaryValue: {
+        fontFamily: Fonts.bold,
+        fontSize: 22,
+        color: Colors.text,
+    },
+    summaryLabel: {
+        fontFamily: Fonts.body,
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
+    summaryDivider: {
+        width: 1,
+        height: 32,
+        backgroundColor: Colors.border,
     },
     cardHeader: {
         flexDirection: 'row',
