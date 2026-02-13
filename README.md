@@ -1,50 +1,88 @@
-# Welcome to your Expo app 👋
+# JS Flow - Procom Hackathon Frontend
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This is the frontend mobile application for the JS Flow project, built with [Expo](https://expo.dev) and [React Native](https://reactnative.dev/). It serves as the user interface for the banking and agent-based services.
 
-## Get started
+## 🚀 Technological Stack
 
-1. Install dependencies
+- **Framework**: [Expo](https://expo.dev/) (SDK 52)
+- **Language**: [TypeScript](https://www.typescriptlang.org/)
+- **Navigation**: [Expo Router](https://docs.expo.dev/router/introduction/) (File-based routing)
+- **Networking**: [Axios](https://axios-http.com/) for API requests
+- **UI Components**: React Native core components + Expo libraries
+- **Audio/Speech**: `expo-av`, `expo-speech`
+
+## 📂 Project Structure
+
+```
+js-flow-expo/
+├── app/                 # Expo Router screens and layouts
+│   ├── (tabs)/          # Main tab-based navigation
+│   └── _layout.tsx      # Root layout configuration
+├── assets/              # Images, fonts, and static assets
+├── components/          # Reusable UI components
+├── constants/           # App-wide constants (colors, layout)
+├── hooks/               # Custom React hooks
+├── services/            # API service layers (Backend integration)
+├── scripts/             # Utility scripts
+└── ...config files
+```
+
+## 🔌 Services & API Integration
+
+The application relies on three main service modules located in the `services/` directory to communicate with various backend microservices.
+
+### 1. Agent Service (`services/api.ts`)
+
+Handles communication with the AI Agent backend.
+
+- **Base URL**: `https://ltgnx8hv-8001.inc1.devtunnels.ms/`
+- **Key Features**:
+  - `AgentService.chat(message, threadId)`: Sends user messages to the AI agent and retrieves responses.
+  - Timeout configured to 60000ms to handle AI processing time.
+
+### 2. Banking Service (`services/bankingApi.ts`)
+
+Manages all financial transactions and account data.
+
+- **Base URL**: `https://ltgnx8hv-8000.inc1.devtunnels.ms/api/v1`
+- **Key Features**:
+  - **Authentication**: Usage of `ngrok-skip-browser-warning` header for dev tunnels.
+  - **Accounts**: `getBalance()`
+  - **Contacts**: `getContacts()`, `createContact()`
+  - **Transfers**: `previewTransfer()`, `executeTransfer()` (Secure PIN-based transfers)
+  - **Transactions**: `getTransactions()` with filtering (category, date range)
+  - **Bill Pay**: `getBillers()`, `payBill()`
+  - **Cards**: `getCards()`, `createVirtualCard()`, `cardAction()` (Freeze/Unfreeze), `updateCardLimit()`
+  - **Analytics**: `getSpendingAnalytics()` for financial insights.
+
+### 3. TTS Service (`services/backend_tts.ts`)
+
+Interface for the Text-to-Speech generation backend.
+
+- **Base URL**: `https://ltgnx8hv-8002.inc1.devtunnels.ms/`
+- **Key Features**:
+  - `getTTSUrl(text, voice)`: Generates a direct streamable URL for the synthesized audio, compatible with `expo-av`.
+  - Default Voice: `en-US-ChristopherNeural`
+
+## 🛠️ Setup & Installation
+
+1. **Install Dependencies**
 
    ```bash
    npm install
    ```
 
-2. Start the app
+2. **Start the App**
 
    ```bash
    npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+3. **Run on Device/Emulator**
+   - Press `a` for Android Emulator
+   - Press `i` for iOS Simulator
+   - Scan the QR code with Expo Go on a physical device
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 📝 Configuration
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+To point to different backend environments (e.g., local vs production), update the `BASE_URL` or `API_URL` constants in the respective files inside the `services/` folder.

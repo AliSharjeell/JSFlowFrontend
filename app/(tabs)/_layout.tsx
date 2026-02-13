@@ -53,7 +53,37 @@ export default function TabLayout() {
                         <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
                             <Ionicons
                                 name={focused ? 'swap-horizontal' : 'swap-horizontal-outline'}
-                                size={22}
+                                size={20}
+                                color={color}
+                            />
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="transactions"
+                options={{
+                    title: 'History',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
+                            <Ionicons
+                                name={focused ? 'receipt' : 'receipt-outline'}
+                                size={20}
+                                color={color}
+                            />
+                        </View>
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="analytics"
+                options={{
+                    title: 'Analytics',
+                    tabBarIcon: ({ color, focused }) => (
+                        <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
+                            <Ionicons
+                                name={focused ? 'pie-chart' : 'pie-chart-outline'}
+                                size={20}
                                 color={color}
                             />
                         </View>
@@ -63,12 +93,12 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="assistant"
                 options={{
-                    title: 'AI Assistant',
+                    title: 'AI',
                     tabBarIcon: ({ color, focused }) => (
                         <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
                             <Ionicons
                                 name={focused ? 'sparkles' : 'sparkles-outline'}
-                                size={22}
+                                size={20}
                                 color={color}
                             />
                         </View>

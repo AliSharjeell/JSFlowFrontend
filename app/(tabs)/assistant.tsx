@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator, Alert,
@@ -18,11 +17,12 @@ import Animated, {
     FadeInDown,
     useAnimatedStyle, useSharedValue, withRepeat, withTiming
 } from 'react-native-reanimated';
+import ActionCard from '../../components/ActionCard';
 import { MarkdownRenderer } from '../../components/MarkdownRenderer';
-import { Waveform } from '../../components/Waveform';
+import VoiceWave from '../../components/VoiceWave';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
-import { AgentService } from '../../services/api';
+import { AgentService, ToolCall } from '../../services/api';
 import { BackendTTSService } from '../../services/backend_tts';
 import { GroqService } from '../../services/groq';
 
@@ -32,6 +32,7 @@ interface ChatMessage {
     role: 'user' | 'agent';
     text: string;
     timestamp: number;
+    toolCalls?: ToolCall[];
 }
 
 export default function AssistantScreen() {
@@ -42,6 +43,17 @@ export default function AssistantScreen() {
     const [metering, setMetering] = useState(-160);
     const [sound, setSound] = useState<Audio.Sound | null>(null);
     const scrollViewRef = useRef<ScrollView>(null);
+    const fillerSoundRef = useRef<Audio.Sound | null>(null);
+    const ttsAbortRef = useRef(false);
+
+    // Filler phrases for immediate audio feedback while agent thinks
+    const FILLER_PHRASES = [
+        'Let me check that for you.',
+        'One moment please.',
+        'Looking into that.',
+        'Let me find that out.',
+        'Sure, give me a second.',
+    ];
 
     // Status text animation
     const statusOpacity = useSharedValue(1);
@@ -54,11 +66,14 @@ export default function AssistantScreen() {
         }
     }, [status]);
 
-    // Cleanup sound on unmount
+    // Cleanup sounds on unmount
     useEffect(() => {
         return () => {
             if (sound) {
                 sound.unloadAsync();
+            }
+            if (fillerSoundRef.current) {
+                fillerSoundRef.current.unloadAsync();
             }
         };
     }, [sound]);
@@ -76,15 +91,6 @@ export default function AssistantScreen() {
         }
     };
 
-    const getStatusIcon = () => {
-        switch (status) {
-            case 'idle': return 'mic-outline';
-            case 'listening': return 'radio-outline';
-            case 'processing': return 'hardware-chip-outline';
-            case 'speaking': return 'volume-high-outline';
-        }
-    };
-
 
     const handleMicPress = async () => {
         if (status === 'idle') {
@@ -97,6 +103,7 @@ export default function AssistantScreen() {
     };
 
     const stopSpeaking = async () => {
+        ttsAbortRef.current = true;
         try {
             if (sound) {
                 await sound.stopAsync();
@@ -107,6 +114,48 @@ export default function AssistantScreen() {
             console.log('Stop speaking error:', e);
         }
         setStatus('idle');
+    };
+
+    // Play a random filler phrase immediately for audio feedback
+    const playFiller = async () => {
+        try {
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: false,
+                playsInSilentModeIOS: true,
+            });
+
+            const phrase = FILLER_PHRASES[Math.floor(Math.random() * FILLER_PHRASES.length)];
+            const fillerUri = BackendTTSService.getTTSUrl(phrase);
+
+            const { sound: fSound } = await Audio.Sound.createAsync(
+                { uri: fillerUri },
+                { shouldPlay: true, volume: 1.0 },
+                (ps) => {
+                    if (ps.isLoaded && ps.didJustFinish) {
+                        fSound.unloadAsync();
+                        if (fillerSoundRef.current === fSound) {
+                            fillerSoundRef.current = null;
+                        }
+                    }
+                }
+            );
+            fillerSoundRef.current = fSound;
+        } catch (e) {
+            console.log('Filler TTS error:', e);
+        }
+    };
+
+    // Stop filler audio immediately
+    const stopFiller = async () => {
+        try {
+            if (fillerSoundRef.current) {
+                await fillerSoundRef.current.stopAsync();
+                await fillerSoundRef.current.unloadAsync();
+                fillerSoundRef.current = null;
+            }
+        } catch (e) {
+            console.log('Stop filler error:', e);
+        }
     };
 
     const startListening = async () => {
@@ -173,9 +222,14 @@ export default function AssistantScreen() {
         }
     };
 
+    // Ref to track if processing is already active (prevents double-send)
+    const processingRef = useRef(false);
+
     const handleSendMessage = async (textOverride?: string) => {
         const textToSend = textOverride || inputText.trim();
-        if (!textToSend || status === 'processing') return;
+        if (!textToSend || processingRef.current || status === 'processing') return;
+
+        processingRef.current = true;
 
         const userMessage: ChatMessage = {
             role: 'user',
@@ -189,22 +243,35 @@ export default function AssistantScreen() {
 
         setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
 
+        // Play filler TTS immediately for audio feedback
+        playFiller();
+
         try {
             const response = await AgentService.chat(textToSend, 'demo_thread_1');
+            console.log('🔍 Agent response:', JSON.stringify(response, null, 2));
+            console.log('🔍 Tool calls:', response?.tool_calls);
             const agentText = response?.answer || "I'm sorry, I couldn't process that.";
+
+            // Stop filler audio before playing real response
+            await stopFiller();
 
             const agentMessage: ChatMessage = {
                 role: 'agent',
                 text: agentText,
                 timestamp: Date.now(),
+                toolCalls: response?.tool_calls || undefined,
             };
 
             setMessages(prev => [...prev, agentMessage]);
             setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
 
-            await speakResponse(agentText);
+            // Start TTS immediately (don't await — text + audio play together)
+            const execId = Math.random().toString(36).substring(7);
+            console.log(`[TTS:${execId}] Starting speakResponse for: "${agentText.substring(0, 20)}..."`);
+            speakResponse(agentText, execId);
         } catch (error: any) {
             console.log('Agent error (suppressed):', error?.message);
+            await stopFiller();
             const fallbackMessage: ChatMessage = {
                 role: 'agent',
                 text: "Sorry, can you tell me this again in detail?",
@@ -213,6 +280,8 @@ export default function AssistantScreen() {
             setMessages(prev => [...prev, fallbackMessage]);
             setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
             setStatus('idle');
+        } finally {
+            processingRef.current = false;
         }
     };
 
@@ -225,79 +294,121 @@ export default function AssistantScreen() {
             .trim();
     };
 
-    const speakResponse = async (text: string) => {
+    // Split text into speakable chunks (sentences)
+    const splitIntoSentences = (text: string): string[] => {
+        // Split on sentence-ending punctuation followed by a space or end
+        const raw = text.match(/[^.!?]+[.!?]+[\s]?|[^.!?]+$/g) || [text];
+        return raw
+            .map(s => s.trim())
+            .filter(s => s.length > 2); // skip tiny fragments
+    };
+
+    const speakResponse = async (text: string, execId?: string) => {
+        const id = execId || Math.random().toString(36).substring(7);
+        console.log(`[TTS:${id}] speakResponse called`);
+
         setStatus('speaking');
+        ttsAbortRef.current = false;
+
         try {
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: false,
                 playsInSilentModeIOS: true,
             });
 
-            // Sanitize text for TTS to avoid 400 errors from special chars/markdown
             const safeText = cleanTextForTTS(text);
-            console.log('🗣️ Speaking:', safeText.substring(0, 50) + '...');
-
             if (!safeText) {
                 setStatus('idle');
                 return;
             }
 
-            // Use the Backend DevTunnel URL directly
-            // note: textToSpeech implies fetching, here we just get the URL
-            const audioUri = BackendTTSService.getTTSUrl(safeText);
+            const sentences = splitIntoSentences(safeText);
+            console.log(`[TTS:${id}] Streaming ${sentences.length} chunks`);
 
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: audioUri },
-                { shouldPlay: true, volume: 1.0 },
-                (playbackStatus) => {
-                    if (playbackStatus.isLoaded && playbackStatus.didJustFinish) {
-                        setStatus('idle');
-                        setMetering(-160);
-                        newSound.unloadAsync();
-                        setSound(null);
-                    }
-                    if (playbackStatus.isLoaded && playbackStatus.isPlaying) {
-                        const fakeMeter = -30 + Math.random() * 20;
-                        setMetering(fakeMeter);
-                    }
+            for (let i = 0; i < sentences.length; i++) {
+                if (ttsAbortRef.current) {
+                    console.log(`[TTS:${id}] Aborted at chunk ${i}`);
+                    break;
                 }
-            );
 
-            setSound(newSound);
+                const chunk = sentences[i];
+                console.log(`[TTS:${id}] Chunk ${i + 1}/${sentences.length}: "${chunk.substring(0, 20)}..."`);
+
+                const audioUri = BackendTTSService.getTTSUrl(chunk);
+
+                try {
+                    // Create and start playing
+                    const { sound: chunkSound } = await Audio.Sound.createAsync(
+                        { uri: audioUri },
+                        { shouldPlay: true, volume: 1.0 }
+                    );
+
+                    setSound(chunkSound);
+
+                    // Wait for this chunk to finish before playing next
+                    await new Promise<void>((resolve) => {
+                        chunkSound.setOnPlaybackStatusUpdate((ps) => {
+                            if (ps.isLoaded && ps.didJustFinish) {
+                                resolve();
+                            }
+                            if (ps.isLoaded && ps.isPlaying) {
+                                setMetering(-30 + Math.random() * 20);
+                            }
+                        });
+                    });
+
+                    await chunkSound.unloadAsync();
+                } catch (chunkErr) {
+                    console.log(`Chunk ${i + 1} error:`, chunkErr);
+                }
+            }
         } catch (error) {
             console.error('TTS Error:', error);
-            setStatus('idle');
         }
+
+        setStatus('idle');
+        setMetering(-160);
+        setSound(null);
     };
 
     const renderMessage = (message: ChatMessage, index: number) => {
         const isUser = message.role === 'user';
         return (
-            <Animated.View
-                key={`${message.timestamp}-${index}`}
-                entering={FadeInDown.delay(50).springify()}
-                style={[
-                    styles.messageBubble,
-                    isUser ? styles.userBubble : styles.agentBubble,
-                ]}
-            >
-                {!isUser && (
-                    <View style={styles.agentIcon}>
-                        <Ionicons name="sparkles" size={14} color={Colors.primary} />
-                    </View>
-                )}
-                {isUser ? (
-                    <Text style={[styles.messageText, styles.userMessageText]}>
-                        {message.text}
-                    </Text>
-                ) : (
-                    <View style={styles.agentTextWrapper}>
-                        <MarkdownRenderer>
+            <View key={`${message.timestamp}-${index}`}>
+                <Animated.View
+                    entering={FadeInDown.delay(50).springify()}
+                    style={[
+                        styles.messageBubble,
+                        isUser ? styles.userBubble : styles.agentBubble,
+                    ]}
+                >
+                    {!isUser && (
+                        <View style={styles.agentIcon}>
+                            <Ionicons name="sparkles" size={14} color={Colors.primary} />
+                        </View>
+                    )}
+                    {isUser ? (
+                        <Text style={[styles.messageText, styles.userMessageText]}>
                             {message.text}
-                        </MarkdownRenderer>
+                        </Text>
+                    ) : (
+                        <View style={styles.agentTextWrapper}>
+                            <MarkdownRenderer>
+                                {message.text}
+                            </MarkdownRenderer>
+                        </View>
+                    )}
+                </Animated.View>
+
+                {/* Render Action Cards below agent message */}
+                {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
+                    <View style={styles.actionCardsContainer}>
+                        {message.toolCalls.map((tc, i) => (
+                            <ActionCard key={`${tc.name}-${i}`} toolCall={tc} index={i} />
+                        ))}
                     </View>
                 )}
-            </Animated.View>
+            </View>
         );
     };
 
@@ -306,11 +417,6 @@ export default function AssistantScreen() {
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-            <LinearGradient
-                colors={[Colors.background, '#EAF2F8', '#D6EAF8']}
-                style={StyleSheet.absoluteFill}
-            />
-
             {/* Header */}
             <View style={styles.header}>
                 <View style={styles.headerCenter}>
@@ -321,7 +427,7 @@ export default function AssistantScreen() {
                     />
                     <View style={[
                         styles.statusDot,
-                        { backgroundColor: status === 'idle' ? Colors.success : Colors.tertiary2 }
+                        { backgroundColor: status === 'idle' ? Colors.success : '#3B82F6' }
                     ]} />
                 </View>
                 <TouchableOpacity
@@ -336,14 +442,14 @@ export default function AssistantScreen() {
             {messages.length === 0 ? (
                 <View style={styles.emptyState}>
                     <Animated.View style={[styles.statusContainer, animatedStatusStyle]}>
-                        <Ionicons name={getStatusIcon()} size={28} color={Colors.primary} />
                         <Text style={styles.statusText}>{getStatusText()}</Text>
                     </Animated.View>
 
                     <View style={styles.waveformWrapper}>
-                        <Waveform
-                            isListening={status === 'listening' || status === 'speaking'}
-                            metering={metering}
+                        <VoiceWave
+                            isPlaying={status === 'listening' || status === 'speaking'}
+                            isProcessing={status === 'processing'}
+                            phase={status}
                         />
                     </View>
 
@@ -368,12 +474,13 @@ export default function AssistantScreen() {
                     {(status === 'listening' || status === 'speaking' || status === 'processing') && (
                         <Animated.View entering={FadeIn} style={styles.inlineStatus}>
                             {status === 'processing' ? (
-                                <ActivityIndicator size="small" color={Colors.primary} />
+                                <ActivityIndicator size="small" color="#3B82F6" />
                             ) : (
                                 <View style={styles.waveformSmall}>
-                                    <Waveform
-                                        isListening={status === 'listening' || status === 'speaking'}
-                                        metering={metering}
+                                    <VoiceWave
+                                        isPlaying={status === 'listening' || status === 'speaking'}
+                                        isProcessing={false}
+                                        phase={status}
                                     />
                                 </View>
                             )}
@@ -391,7 +498,7 @@ export default function AssistantScreen() {
                     <TextInput
                         style={styles.textInput}
                         placeholder="Type a message..."
-                        placeholderTextColor={Colors.textSecondary}
+                        placeholderTextColor="#A0AEC0"
                         value={inputText}
                         onChangeText={setInputText}
                         onSubmitEditing={() => handleSendMessage()}
@@ -404,7 +511,9 @@ export default function AssistantScreen() {
                             style={styles.sendButton}
                             disabled={status === 'processing'}
                         >
-                            <Ionicons name="send" size={20} color={Colors.primary} />
+                            <View style={styles.sendButtonInner}>
+                                <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+                            </View>
                         </TouchableOpacity>
                     ) : null}
                 </View>
@@ -419,16 +528,10 @@ export default function AssistantScreen() {
                     activeOpacity={0.8}
                     disabled={status === 'processing'}
                 >
-                    <LinearGradient
-                        colors={
-                            status === 'listening'
-                                ? [Colors.error, '#C0392B']
-                                : status === 'speaking'
-                                    ? [Colors.primary, '#1A4B8F']
-                                    : [Colors.tertiary1, Colors.tertiary2]
-                        }
-                        style={styles.micGradient}
-                    >
+                    <View style={[
+                        styles.micInner,
+                        status === 'listening' && styles.micInnerActive,
+                    ]}>
                         {status === 'processing' ? (
                             <ActivityIndicator color="white" size="small" />
                         ) : (
@@ -438,11 +541,11 @@ export default function AssistantScreen() {
                                         : status === 'speaking' ? 'stop'
                                             : 'mic'
                                 }
-                                size={32}
+                                size={28}
                                 color="white"
                             />
                         )}
-                    </LinearGradient>
+                    </View>
                 </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
@@ -453,6 +556,7 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         paddingTop: 50,
+        backgroundColor: '#FFFFFF',
     },
     header: {
         flexDirection: 'row',
@@ -495,7 +599,7 @@ const styles = StyleSheet.create({
     statusText: {
         fontFamily: Fonts.medium,
         fontSize: 18,
-        color: Colors.textSecondary,
+        color: '#94A3B8',
         letterSpacing: 0.5,
     },
     waveformWrapper: {
@@ -508,9 +612,8 @@ const styles = StyleSheet.create({
     hintText: {
         fontFamily: Fonts.regular,
         fontSize: 14,
-        color: Colors.textSecondary,
+        color: '#CBD5E1',
         textAlign: 'center',
-        opacity: 0.7,
     },
 
     // Chat
@@ -521,16 +624,16 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 6,
+        paddingVertical: 8,
         paddingHorizontal: 16,
         gap: 8,
-        backgroundColor: 'rgba(255,255,255,0.85)',
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: 'rgba(0,0,0,0.06)',
+        backgroundColor: '#FFFFFF',
+        borderTopWidth: 1,
+        borderTopColor: '#F1F5F9',
     },
     waveformSmall: {
         height: 36,
-        width: 80,
+        width: 100,
         overflow: 'hidden',
         justifyContent: 'center',
         alignItems: 'center',
@@ -538,7 +641,7 @@ const styles = StyleSheet.create({
     inlineStatusText: {
         fontFamily: Fonts.medium,
         fontSize: 13,
-        color: Colors.textSecondary,
+        color: '#94A3B8',
     },
     messagesList: {
         flex: 1,
@@ -557,27 +660,24 @@ const styles = StyleSheet.create({
     },
     userBubble: {
         alignSelf: 'flex-end',
-        backgroundColor: Colors.primary,
+        backgroundColor: '#3B82F6',
         borderBottomRightRadius: 4,
     },
     agentBubble: {
         alignSelf: 'flex-start',
-        backgroundColor: Colors.white,
+        backgroundColor: '#F8FAFC',
         borderBottomLeftRadius: 4,
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 4,
-        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
     },
     agentIcon: {
         width: 24,
         height: 24,
         borderRadius: 12,
-        backgroundColor: '#EBF3FF',
+        backgroundColor: '#EFF6FF',
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: 2,
@@ -589,17 +689,17 @@ const styles = StyleSheet.create({
     },
     userMessageText: {
         fontFamily: Fonts.regular,
-        color: Colors.white,
-    },
-    agentMessageText: {
-        fontFamily: Fonts.regular,
-        color: Colors.text,
-        flexShrink: 1,
-        flex: 1,
+        color: '#FFFFFF',
     },
     agentTextWrapper: {
         flex: 1,
         flexShrink: 1,
+    },
+    actionCardsContainer: {
+        paddingLeft: 32,
+        paddingRight: 16,
+        marginTop: 6,
+        marginBottom: 4,
     },
 
     // Controls
@@ -608,55 +708,68 @@ const styles = StyleSheet.create({
         paddingBottom: 16,
         paddingTop: 12,
         alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderTopWidth: 1,
+        borderTopColor: '#F1F5F9',
     },
     inputWrapper: {
         flexDirection: 'row',
-        backgroundColor: Colors.white,
+        backgroundColor: '#F8FAFC',
         borderRadius: 25,
         paddingHorizontal: 18,
         paddingVertical: 0,
         alignItems: 'center',
         width: '100%',
         marginBottom: 16,
-        height: 52,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
-        elevation: 3,
+        height: 50,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
     },
     textInput: {
         flex: 1,
         fontFamily: Fonts.regular,
-        fontSize: 16,
+        fontSize: 15,
         color: Colors.text,
         paddingVertical: 12,
         height: 48,
     },
     sendButton: {
-        padding: 10,
+        padding: 4,
+    },
+    sendButtonInner: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#3B82F6',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     micButton: {
-        width: 68,
-        height: 68,
-        borderRadius: 34,
-        shadowColor: Colors.tertiary2,
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.35,
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
         shadowRadius: 12,
         elevation: 6,
     },
     micButtonActive: {
         transform: [{ scale: 1.08 }],
-        shadowColor: Colors.error,
+        shadowColor: '#EF4444',
     },
     micButtonProcessing: {
         opacity: 0.7,
     },
-    micGradient: {
+    micInner: {
         flex: 1,
-        borderRadius: 34,
+        borderRadius: 32,
+        backgroundColor: '#3B82F6',
         justifyContent: 'center',
         alignItems: 'center',
     },
+    micInnerActive: {
+        backgroundColor: '#EF4444',
+    },
 });
+

@@ -112,12 +112,12 @@ export default function CardsScreen() {
         if (!selectedCard || !pendingAction) return;
         if (actionPin.length !== 4) { Alert.alert('Invalid PIN', 'Enter your 4-digit PIN.'); return; }
 
-        setActionLoading(selectedCard.card_id);
+        setActionLoading(selectedCard.id);
         try {
-            await BankingApi.cardAction(selectedCard.card_id, pendingAction, actionPin);
+            await BankingApi.cardAction(selectedCard.id, pendingAction, actionPin);
             setCards(prev => prev.map(c =>
-                c.card_id === selectedCard.card_id
-                    ? { ...c, status: pendingAction === 'freeze' ? 'frozen' : 'active' }
+                c.id === selectedCard.id
+                    ? { ...c, status: pendingAction === 'freeze' ? 'FROZEN' : 'ACTIVE' }
                     : c
             ));
             setShowActionModal(false);
@@ -138,7 +138,7 @@ export default function CardsScreen() {
         }
         setActionLoading('pin');
         try {
-            await BankingApi.changeCardPin(selectedCard.card_id, currentPin, newPin);
+            await BankingApi.changeCardPin(selectedCard.id, currentPin, newPin);
             Alert.alert('Success ✅', 'PIN changed successfully.');
             setShowPinModal(false);
             setCurrentPin('');
@@ -158,7 +158,7 @@ export default function CardsScreen() {
 
         setActionLoading('limit');
         try {
-            await BankingApi.updateCardLimit(selectedCard.card_id, amt, limitPin, limitType);
+            await BankingApi.updateCardLimit(selectedCard.id, amt, limitPin, limitType);
             Alert.alert('Success ✅', `${limitType.charAt(0).toUpperCase() + limitType.slice(1)} limit updated to PKR ${amt.toLocaleString()}.`);
             setShowLimitModal(false);
             setNewLimit('');
@@ -179,7 +179,7 @@ export default function CardsScreen() {
 
         return (
             <Animated.View
-                key={card.card_id}
+                key={card.id}
                 entering={FadeInDown.delay(index * 120).springify()}
             >
                 <LinearGradient
@@ -208,7 +208,7 @@ export default function CardsScreen() {
                     </View>
 
                     <View style={styles.cardHeader}>
-                        <Text style={styles.cardLabel}>{card.label}</Text>
+                        <Text style={styles.cardLabel}>{card.label || (card.is_virtual ? 'Virtual Card' : 'Debit Card')}</Text>
                         <Ionicons name="card" size={28} color="rgba(255,255,255,0.3)" />
                     </View>
 
@@ -226,7 +226,7 @@ export default function CardsScreen() {
                         <View style={{ alignItems: 'flex-end' }}>
                             <Text style={styles.cardDetailLabel}>LIMIT</Text>
                             <Text style={styles.cardDetailValue}>
-                                PKR {(card.spend_limit ?? (card as any).limit)?.toLocaleString() || '0'}
+                                PKR {parseFloat(String(card.daily_limit || 0)).toLocaleString()}
                             </Text>
                         </View>
                     </View>
@@ -236,9 +236,9 @@ export default function CardsScreen() {
                         <TouchableOpacity
                             style={styles.cardActionBtn}
                             onPress={() => initiateCardAction(card, isFrozen ? 'unfreeze' : 'freeze')}
-                            disabled={actionLoading === card.card_id}
+                            disabled={actionLoading === card.id}
                         >
-                            {actionLoading === card.card_id ? (
+                            {actionLoading === card.id ? (
                                 <ActivityIndicator size="small" color="#fff" />
                             ) : (
                                 <>
@@ -319,9 +319,12 @@ export default function CardsScreen() {
                     <Animated.View entering={FadeInDown} style={styles.errorBanner}>
                         <Ionicons name="cloud-offline-outline" size={18} color={Colors.error} />
                         <Text style={styles.errorText}>{error}</Text>
+                        <TouchableOpacity onPress={onRefresh} style={{ padding: 4 }}>
+                            <Ionicons name="refresh" size={18} color={Colors.error} />
+                        </TouchableOpacity>
                     </Animated.View>
                 )}
-                {cards.length === 0 ? (
+                {!error && cards.length === 0 ? (
                     <View style={styles.emptyState}>
                         <Animated.View entering={FadeIn} style={styles.emptyIcon}>
                             <Ionicons name="card-outline" size={64} color={Colors.border} />
@@ -343,7 +346,7 @@ export default function CardsScreen() {
                             </LinearGradient>
                         </TouchableOpacity>
                     </View>
-                ) : (
+                ) : cards.length > 0 ? (
                     <View>
                         {/* Cards Summary Strip */}
                         <Animated.View key="summary" entering={FadeInDown.delay(50).springify()} style={styles.summaryStrip}>
@@ -364,7 +367,7 @@ export default function CardsScreen() {
                         </Animated.View>
                         {cards.map((card, index) => renderCard(card, index))}
                     </View>
-                )}
+                ) : null}
 
                 <View style={{ height: 24 }} />
             </ScrollView>
@@ -579,7 +582,7 @@ export default function CardsScreen() {
                         />
 
                         <TouchableOpacity
-                            style={[styles.primaryBtn, actionLoading === selectedCard?.card_id && { opacity: 0.6 }]}
+                            style={[styles.primaryBtn, actionLoading === selectedCard?.id && { opacity: 0.6 }]}
                             onPress={handleConfirmAction}
                             disabled={!!actionLoading}
                         >

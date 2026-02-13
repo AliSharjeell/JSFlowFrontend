@@ -88,7 +88,7 @@ export default function Dashboard() {
         {
             label: 'Analytics',
             icon: 'pie-chart-outline' as keyof typeof Ionicons.glyphMap,
-            onPress: () => { },
+            onPress: () => router.push('/(tabs)/analytics'),
             color: Colors.success,
         },
     ];
@@ -188,7 +188,7 @@ export default function Dashboard() {
                 {/* Recent Transactions */}
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>Recent Transactions</Text>
-                    <TouchableOpacity>
+                    <TouchableOpacity onPress={() => router.push('/(tabs)/transactions')}>
                         <Text style={styles.seeAll}>See All</Text>
                     </TouchableOpacity>
                 </View>

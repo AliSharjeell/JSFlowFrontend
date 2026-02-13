@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://localistic-semineurotically-janeen.ngrok-free.dev/api/v1';
+const BASE_URL = 'https://ltgnx8hv-8000.inc1.devtunnels.ms/api/v1';
 const TIMEOUT = 30000;
 
 const client = axios.create({
@@ -25,13 +25,14 @@ export interface BalanceData {
 export interface Contact {
     id: string;
     name: string;
-    account_number: string;
     nickname?: string;
     bank?: string;
+    account_no: string;
 }
 
 export interface TransferPreview {
     recipient_name: string;
+    bank?: string;
     account_number: string;
     amount: number;
     fee: number;
@@ -78,12 +79,14 @@ export interface BillPayResult {
 }
 
 export interface VirtualCard {
-    card_id: string;
-    label: string;
+    id: string;
+    card_id?: string;
+    label?: string;
     pan: string;
+    is_virtual?: boolean;
     expiry: string;
     cvv: string;
-    spend_limit: number;
+    daily_limit: string | number;
     status: string;
     message?: string;
 }
@@ -119,11 +122,9 @@ export const BankingApi = {
         return Array.isArray(data) ? data : data ?? [];
     },
 
-    createContact: async (accountNumber: string, nickname?: string, name?: string, bankName?: string): Promise<Contact> => {
+    createContact: async (accountNumber: string, nickname?: string): Promise<Contact> => {
         const body: Record<string, string> = { account_number: accountNumber };
         if (nickname) body.nickname = nickname;
-        if (name) body.name = name;
-        if (bankName) body.bank_name = bankName;
         const { data } = await client.post('/contacts', body);
         return data;
     },
@@ -148,7 +149,10 @@ export const BankingApi = {
     ): Promise<TransferResult> => {
         const body: Record<string, any> = { recipient_id: recipientId, amount, pin };
         if (note) body.note = note;
-        const { data } = await client.post('/transfers', body);
+        const idempotencyKey = `txn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const { data } = await client.post('/transfers', body, {
+            headers: { 'X-Idempotency-Key': idempotencyKey },
+        });
         return data;
     },
 
@@ -260,6 +264,18 @@ export const BankingApi = {
         const params: Record<string, string> = { period };
         if (category) params.category = category;
         const { data } = await client.get('/analytics/spend', { params });
+        return data;
+    },
+
+    // ── Account Actions ──
+    accountAction: async (
+        action: 'freeze' | 'unfreeze',
+        pin: string,
+        reason?: string
+    ): Promise<any> => {
+        const body: Record<string, string> = { action, pin };
+        if (reason) body.reason = reason;
+        const { data } = await client.post('/accounts/action', body);
         return data;
     },
 };
