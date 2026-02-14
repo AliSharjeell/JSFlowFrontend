@@ -13,7 +13,6 @@ import {
     View
 } from 'react-native';
 import Animated, {
-    FadeIn,
     FadeInDown,
     useAnimatedStyle, useSharedValue, withRepeat, withTiming
 } from 'react-native-reanimated';
@@ -162,6 +161,17 @@ export default function AssistantScreen() {
 
     const startListening = async () => {
         try {
+            // Defensive cleanup: Ensure any existing recording is stopped/unloaded
+            // This prevents "Only one Recording object can be prepared at a given time" error
+            if (recording) {
+                try {
+                    await recording.stopAndUnloadAsync();
+                } catch (e) {
+                    // Ignore error if already unloaded or invalid
+                }
+                setRecording(null);
+            }
+
             const { status: perm } = await Audio.requestPermissionsAsync();
             if (perm !== 'granted') {
                 Alert.alert('Permission Needed', 'Please grant microphone permission to use voice features.');
@@ -174,16 +184,38 @@ export default function AssistantScreen() {
             });
 
             const newRecording = new Audio.Recording();
-            await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-            newRecording.setOnRecordingStatusUpdate((recStatus) => {
-                if (recStatus.metering !== undefined) {
-                    setMetering(recStatus.metering);
-                }
-            });
+            try {
+                await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+                newRecording.setOnRecordingStatusUpdate((recStatus) => {
+                    if (recStatus.metering !== undefined) {
+                        setMetering(recStatus.metering);
+                    }
+                });
 
-            await newRecording.startAsync();
-            setRecording(newRecording);
-            setStatus('listening');
+                await newRecording.startAsync();
+                setRecording(newRecording);
+                setStatus('listening');
+            } catch (err) {
+                // If preparation fails, it might be due to a lingering recording or race condition
+                // Attempt one retry after a small delay
+                console.warn('Recording preparation failed, retrying cleanup...', err);
+                try {
+                    await newRecording.stopAndUnloadAsync();
+                } catch { }
+
+                // One more attempt with a fresh object after cleanup
+                const retryRecording = new Audio.Recording();
+                await retryRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+                retryRecording.setOnRecordingStatusUpdate((recStatus) => {
+                    if (recStatus.metering !== undefined) {
+                        setMetering(recStatus.metering);
+                    }
+                });
+                await retryRecording.startAsync();
+                setRecording(retryRecording);
+                setStatus('listening');
+            }
+
         } catch (err) {
             console.error('Failed to start recording', err);
             Alert.alert('Error', 'Could not start recording. Please try again.');
@@ -306,19 +338,44 @@ export default function AssistantScreen() {
                 messageText = `Select ${payload}`;
                 break;
             case 'submit_form':
-                // Convert form values to a natural language string or JSON
+                // Convert form values to a JSON string with typed numbers where appropriate
                 if (payload && typeof payload === 'object') {
-                    const entries = Object.entries(payload)
-                        .filter(([_, v]) => v)
-                        .map(([k, v]) => `${k}: ${v}`)
-                        .join(', ');
-                    messageText = entries || 'Submit form';
+                    const typedPayload: Record<string, any> = { ...payload };
+
+                    // Attempt to convert numeric strings to numbers for LLM clarity
+                    Object.keys(typedPayload).forEach(key => {
+                        const val = typedPayload[key];
+                        // If value is a string that looks like a number
+                        if (typeof val === 'string' && !isNaN(Number(val)) && val.trim() !== '') {
+                            const lowerKey = key.toLowerCase();
+                            // Keep as string if it's likely an identifier or PIN
+                            // Exception: "limit", "amount", "balance", "price", "fee" should be numbers
+                            const isNumericField =
+                                lowerKey.includes('amount') ||
+                                lowerKey.includes('limit') ||
+                                lowerKey.includes('balance') ||
+                                lowerKey.includes('price') ||
+                                lowerKey.includes('fee');
+
+                            const isStringField =
+                                lowerKey.includes('pin') ||
+                                lowerKey.includes('id') ||
+                                lowerKey.includes('account') ||
+                                lowerKey.includes('number'); // e.g. consumer_number
+
+                            if (isNumericField || !isStringField) {
+                                typedPayload[key] = Number(val);
+                            }
+                        }
+                    });
+
+                    messageText = JSON.stringify(typedPayload);
                 } else {
                     messageText = String(payload || 'Submit');
                 }
                 break;
             default:
-                messageText = payload ? String(payload) : action;
+                messageText = payload ? (typeof payload === 'object' ? JSON.stringify(payload) : String(payload)) : action;
         }
 
         if (messageText) {
@@ -335,14 +392,7 @@ export default function AssistantScreen() {
             .trim();
     };
 
-    // Split text into speakable chunks (sentences)
-    const splitIntoSentences = (text: string): string[] => {
-        // Split on sentence-ending punctuation followed by a space or end
-        const raw = text.match(/[^.!?]+[.!?]+[\s]?|[^.!?]+$/g) || [text];
-        return raw
-            .map(s => s.trim())
-            .filter(s => s.length > 2); // skip tiny fragments
-    };
+
 
     const speakResponse = async (text: string, execId?: string) => {
         const id = execId || Math.random().toString(36).substring(7);
@@ -363,46 +413,35 @@ export default function AssistantScreen() {
                 return;
             }
 
-            const sentences = splitIntoSentences(safeText);
-            console.log(`[TTS:${id}] Streaming ${sentences.length} chunks`);
+            console.log(`[TTS:${id}] Fetching audio for full text...`);
+            const audioUri = BackendTTSService.getTTSUrl(safeText);
 
-            for (let i = 0; i < sentences.length; i++) {
-                if (ttsAbortRef.current) {
-                    console.log(`[TTS:${id}] Aborted at chunk ${i}`);
-                    break;
-                }
+            try {
+                // Create and start playing
+                const { sound: fullSound } = await Audio.Sound.createAsync(
+                    { uri: audioUri },
+                    { shouldPlay: true, volume: 1.0 }
+                );
 
-                const chunk = sentences[i];
-                console.log(`[TTS:${id}] Chunk ${i + 1}/${sentences.length}: "${chunk.substring(0, 20)}..."`);
+                setSound(fullSound);
 
-                const audioUri = BackendTTSService.getTTSUrl(chunk);
-
-                try {
-                    // Create and start playing
-                    const { sound: chunkSound } = await Audio.Sound.createAsync(
-                        { uri: audioUri },
-                        { shouldPlay: true, volume: 1.0 }
-                    );
-
-                    setSound(chunkSound);
-
-                    // Wait for this chunk to finish before playing next
-                    await new Promise<void>((resolve) => {
-                        chunkSound.setOnPlaybackStatusUpdate((ps) => {
-                            if (ps.isLoaded && ps.didJustFinish) {
-                                resolve();
-                            }
-                            if (ps.isLoaded && ps.isPlaying) {
-                                setMetering(-30 + Math.random() * 20);
-                            }
-                        });
+                // Wait for playback to finish
+                await new Promise<void>((resolve) => {
+                    fullSound.setOnPlaybackStatusUpdate((ps) => {
+                        if (ps.isLoaded && ps.didJustFinish) {
+                            resolve();
+                        }
+                        if (ps.isLoaded && ps.isPlaying) {
+                            setMetering(-30 + Math.random() * 20);
+                        }
                     });
+                });
 
-                    await chunkSound.unloadAsync();
-                } catch (chunkErr) {
-                    console.log(`Chunk ${i + 1} error:`, chunkErr);
-                }
+                await fullSound.unloadAsync();
+            } catch (err) {
+                console.error(`[TTS:${id}] Playback error:`, err);
             }
+
         } catch (error) {
             console.error('TTS Error:', error);
         }
@@ -442,7 +481,7 @@ export default function AssistantScreen() {
                 </Animated.View>
 
                 {/* Render Visual Widget below agent message */}
-                {!isUser && message.visual && (
+                {!isUser && message.visual && message.visual.type !== 'TEXT_BUBBLE' && (
                     <View style={styles.widgetContainer}>
                         <VisualStage
                             visual={message.visual}
@@ -521,80 +560,76 @@ export default function AssistantScreen() {
                         {messages.map((msg, i) => renderMessage(msg, i))}
                     </ScrollView>
 
-                    {/* Status bar pinned above controls */}
-                    {(status === 'listening' || status === 'speaking' || status === 'processing') && (
-                        <Animated.View entering={FadeIn} style={styles.inlineStatus}>
-                            {status === 'processing' ? (
-                                <ActivityIndicator size="small" color="#3B82F6" />
-                            ) : (
-                                <View style={styles.waveformSmall}>
-                                    <VoiceWave
-                                        isPlaying={status === 'listening' || status === 'speaking'}
-                                        isProcessing={false}
-                                        phase={status}
-                                    />
-                                </View>
-                            )}
-                            <Animated.Text style={[styles.inlineStatusText, animatedStatusStyle]}>
-                                {getStatusText()}
-                            </Animated.Text>
-                        </Animated.View>
-                    )}
+
                 </View>
             )}
 
             {/* Controls */}
             <View style={styles.controlsContainer}>
-                <View style={styles.inputWrapper}>
-                    <TextInput
-                        style={styles.textInput}
-                        placeholder="Type a message..."
-                        placeholderTextColor="#A0AEC0"
-                        value={inputText}
-                        onChangeText={setInputText}
-                        onSubmitEditing={() => handleSendMessage()}
-                        editable={status !== 'processing'}
-                        multiline={false}
-                    />
-                    {inputText.trim() ? (
-                        <TouchableOpacity
-                            onPress={() => handleSendMessage()}
-                            style={styles.sendButton}
-                            disabled={status === 'processing'}
-                        >
-                            <View style={styles.sendButtonInner}>
-                                <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
-                            </View>
-                        </TouchableOpacity>
-                    ) : null}
-                </View>
+                {/* Input Field (hidden when listening/speaking to focus on voice) */}
+                {status === 'idle' && (
+                    <View style={styles.inputWrapper}>
+                        <TextInput
+                            style={styles.textInput}
+                            placeholder="Type a message..."
+                            placeholderTextColor="#A0AEC0"
+                            value={inputText}
+                            onChangeText={setInputText}
+                            onSubmitEditing={() => handleSendMessage()}
+                            editable={true}
+                            multiline={false}
+                        />
+                        {inputText.trim() ? (
+                            <TouchableOpacity
+                                onPress={() => handleSendMessage()}
+                                style={styles.sendButton}
+                            >
+                                <View style={styles.sendButtonInner}>
+                                    <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+                                </View>
+                            </TouchableOpacity>
+                        ) : null}
+                    </View>
+                )}
 
+                {/* Full Width Mic / Status Button */}
                 <TouchableOpacity
                     style={[
-                        styles.micButton,
-                        status === 'listening' && styles.micButtonActive,
-                        status === 'processing' && styles.micButtonProcessing,
+                        styles.fullWidthButton,
+                        status === 'listening' && styles.btnListening,
+                        status === 'processing' && styles.btnProcessing,
+                        status === 'speaking' && styles.btnSpeaking,
                     ]}
                     onPress={handleMicPress}
-                    activeOpacity={0.8}
+                    activeOpacity={0.9}
                     disabled={status === 'processing'}
                 >
-                    <View style={[
-                        styles.micInner,
-                        status === 'listening' && styles.micInnerActive,
-                    ]}>
-                        {status === 'processing' ? (
-                            <ActivityIndicator color="white" size="small" />
+                    <View style={styles.btnContent}>
+                        {status === 'idle' ? (
+                            <>
+                                <Ionicons name="mic" size={24} color="#FFFFFF" />
+                                <Text style={styles.btnText}>Tap to Speak</Text>
+                            </>
+                        ) : status === 'processing' ? (
+                            <>
+                                <ActivityIndicator color="#FFFFFF" style={{ marginRight: 10 }} />
+                                <Text style={styles.btnText}>Thinking...</Text>
+                            </>
                         ) : (
-                            <Ionicons
-                                name={
-                                    status === 'listening' ? 'stop'
-                                        : status === 'speaking' ? 'stop'
-                                            : 'mic'
-                                }
-                                size={28}
-                                color="white"
-                            />
+                            // Listening or Speaking
+                            <View style={styles.activeStateWrapper}>
+                                <VoiceWave
+                                    isPlaying={true}
+                                    isProcessing={false}
+                                    phase={status}
+                                />
+                                <Text style={styles.btnStatusText}>
+                                    {status === 'listening' ? 'Listening...' : 'Speaking...'}
+                                </Text>
+                                <View style={styles.stopIconBadge}>
+                                    <Ionicons name="stop" size={12} color={getStatusColor(status)} />
+                                </View>
+                            </View>
                         )}
                     </View>
                 </TouchableOpacity>
@@ -801,31 +836,73 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    micButton: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        shadowColor: '#3B82F6',
+    /* New Full Width Button Styles */
+    fullWidthButton: {
+        width: '100%',
+        height: 64, // Taller touch target
+        backgroundColor: '#2563EB', // Primary Blue
+        borderRadius: 32, // Pill shape
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#2563EB',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
-        shadowRadius: 12,
+        shadowRadius: 8,
         elevation: 6,
     },
-    micButtonActive: {
-        transform: [{ scale: 1.08 }],
-        shadowColor: '#EF4444',
+    btnListening: {
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#F59E0B',
+        shadowColor: '#F59E0B',
     },
-    micButtonProcessing: {
-        opacity: 0.7,
+    btnProcessing: {
+        backgroundColor: '#3B82F6', // Lighter blue
     },
-    micInner: {
-        flex: 1,
-        borderRadius: 32,
-        backgroundColor: '#3B82F6',
-        justifyContent: 'center',
+    btnSpeaking: {
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#10B981',
+        shadowColor: '#10B981',
+    },
+    btnContent: {
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
     },
-    micInnerActive: {
-        backgroundColor: '#EF4444',
+    btnText: {
+        fontFamily: Fonts.bold,
+        fontSize: 18,
+        color: '#FFFFFF',
+        marginLeft: 8,
+    },
+    activeStateWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        // width: '100%', // Removed to let content size itself
+    },
+    btnStatusText: {
+        fontFamily: Fonts.medium,
+        fontSize: 16,
+        color: '#374151',
+        marginHorizontal: 12,
+    },
+    stopIconBadge: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: '#F3F4F6',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });
+
+function getStatusColor(status: string) {
+    switch (status) {
+        case 'listening': return '#F59E0B';
+        case 'speaking': return '#10B981';
+        case 'processing': return '#3B82F6';
+        default: return '#6B7280';
+    }
+}

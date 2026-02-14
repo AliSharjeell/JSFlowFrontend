@@ -1,6 +1,6 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors } from '../constants/Colors';
 import { Fonts } from '../constants/Fonts';
@@ -19,6 +19,37 @@ const fmtMoney = (n: number | undefined, cur = 'PKR') =>
     n != null ? `${cur} ${Number(n).toLocaleString()}` : '—';
 
 const CARD_MAP: Record<string, CardConfig> = {
+    /* ─── Contacts ─── */
+    get_contacts: {
+        icon: 'people-outline',
+        title: 'Contacts Found',
+        color: '#2563EB',
+        bg: '#EFF6FF',
+        render: (r) => {
+            const contacts = Array.isArray(r) ? r : r?.contacts || [];
+            if (contacts.length === 0) return <Text style={s.dimText}>No contacts found</Text>;
+            return (
+                <>
+                    {contacts.slice(0, 5).map((c: any, i: number) => (
+                        <View key={i} style={s.txRow}>
+                            <View style={[s.iconWrap, { width: 32, height: 32, borderRadius: 16, backgroundColor: '#DBEAFE', marginRight: 10 }]}>
+                                <Text style={{ fontFamily: Fonts.bold, color: '#1E40AF', textAlign: 'center', lineHeight: 32 }}>
+                                    {c.name?.charAt(0) || '?'}
+                                </Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={s.txName}>{c.name}</Text>
+                                <Text style={s.txDate}>{c.bank} • {c.account_no?.slice(-4)}</Text>
+                            </View>
+                        </View>
+                    ))}
+                    {contacts.length > 5 && (
+                        <Text style={s.dimText}>+{contacts.length - 5} more</Text>
+                    )}
+                </>
+            );
+        },
+    },
     /* ─── Balance ─── */
     get_balance: {
         icon: 'wallet-outline',
@@ -127,11 +158,15 @@ const CARD_MAP: Record<string, CardConfig> = {
         title: 'Card Created',
         color: '#059669',
         bg: '#ECFDF5',
-        render: (r) => (
+        render: (r, args) => (
             <>
                 <Row label="Card" value={r?.pan || '•••• ****'} />
-                <Row label="Label" value={r?.label || '—'} />
-                <Row label="Limit" value={fmtMoney(parseFloat(String(r?.daily_limit || r?.limit || 0)))} bold />
+                <Row label="Label" value={r?.label || args?.label || '—'} />
+                <Row
+                    label="Limit"
+                    value={fmtMoney(parseFloat(String(r?.daily_limit || r?.limit || args?.limit || 0)))}
+                    bold
+                />
                 <Row label="Status" value={r?.status || 'Active'} />
             </>
         ),
@@ -246,6 +281,67 @@ const CARD_MAP: Record<string, CardConfig> = {
             <>
                 <Row label="Status" value={r?.message || 'Registered'} />
                 {r?.user_id && <Row label="User ID" value={r.user_id} />}
+            </>
+        ),
+    },
+
+    /* ─── Create Contact ─── */
+    create_contact: {
+        icon: 'person-add-outline',
+        title: 'Contact Created',
+        color: '#059669',
+        bg: '#ECFDF5',
+        render: (r) => (
+            <>
+                <Row label="Name" value={r?.name || r?.nickname || '—'} bold />
+                <Row label="Account" value={r?.account_no || '—'} />
+                {r?.bank && <Row label="Bank" value={r.bank} />}
+            </>
+        ),
+    },
+
+    /* ─── Save Biller ─── */
+    save_biller: {
+        icon: 'save-outline',
+        title: 'Biller Saved',
+        color: '#059669',
+        bg: '#ECFDF5',
+        render: (r) => (
+            <>
+                <Row label="Name" value={r?.name || r?.nickname || '—'} bold />
+                <Row label="Consumer No" value={r?.consumer_number || '—'} />
+                <Row label="Provider" value={r?.provider_slug || '—'} />
+            </>
+        ),
+    },
+
+    /* ─── Card Actions (PIN/Limit) ─── */
+    change_card_pin: {
+        icon: 'key-outline',
+        title: 'PIN Changed',
+        color: '#2563EB',
+        bg: '#EFF6FF',
+        render: (r) => (
+            <>
+                <Row label="Status" value={r?.status || r?.message || 'Success'} />
+                {r?.card_id && <Row label="Card ID" value={r.card_id} />}
+            </>
+        ),
+    },
+
+    update_card_limit: {
+        icon: 'speedometer-outline',
+        title: 'Limit Updated',
+        color: '#2563EB',
+        bg: '#EFF6FF',
+        render: (r, args) => (
+            <>
+                <Row label="Status" value={r?.status || 'Success'} />
+                <Row
+                    label="New Limit"
+                    value={fmtMoney(r?.new_limit || r?.daily_limit || r?.amount || args?.amount)}
+                    bold
+                />
             </>
         ),
     },
