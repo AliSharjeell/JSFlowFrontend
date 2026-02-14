@@ -18,11 +18,12 @@ import Animated, {
     useAnimatedStyle, useSharedValue, withRepeat, withTiming
 } from 'react-native-reanimated';
 import ActionCard from '../../components/ActionCard';
+import VisualStage from '../../components/agent/VisualStage';
 import { MarkdownRenderer } from '../../components/MarkdownRenderer';
 import VoiceWave from '../../components/VoiceWave';
 import { Colors } from '../../constants/Colors';
 import { Fonts } from '../../constants/Fonts';
-import { AgentService, ToolCall } from '../../services/api';
+import { AgentService, ToolCall, VisualPayload, getDisplayText, getVoiceText } from '../../services/api';
 import { BackendTTSService } from '../../services/backend_tts';
 import { GroqService } from '../../services/groq';
 
@@ -33,6 +34,7 @@ interface ChatMessage {
     text: string;
     timestamp: number;
     toolCalls?: ToolCall[];
+    visual?: VisualPayload | null;
 }
 
 export default function AssistantScreen() {
@@ -249,26 +251,29 @@ export default function AssistantScreen() {
         try {
             const response = await AgentService.chat(textToSend, 'demo_thread_1');
             console.log('🔍 Agent response:', JSON.stringify(response, null, 2));
-            console.log('🔍 Tool calls:', response?.tool_calls);
-            const agentText = response?.answer || "I'm sorry, I couldn't process that.";
+
+            // Extract voice text (for TTS) and display text (for chat bubble)
+            const voiceText = getVoiceText(response);
+            const displayText = getDisplayText(response);
 
             // Stop filler audio before playing real response
             await stopFiller();
 
             const agentMessage: ChatMessage = {
                 role: 'agent',
-                text: agentText,
+                text: displayText,
                 timestamp: Date.now(),
                 toolCalls: response?.tool_calls || undefined,
+                visual: response?.visual || null,
             };
 
             setMessages(prev => [...prev, agentMessage]);
             setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
 
-            // Start TTS immediately (don't await — text + audio play together)
+            // Start TTS with voice text (don't await — text + audio play together)
             const execId = Math.random().toString(36).substring(7);
-            console.log(`[TTS:${execId}] Starting speakResponse for: "${agentText.substring(0, 20)}..."`);
-            speakResponse(agentText, execId);
+            console.log(`[TTS:${execId}] Starting speakResponse for: "${voiceText.substring(0, 20)}..."`);
+            speakResponse(voiceText, execId);
         } catch (error: any) {
             console.log('Agent error (suppressed):', error?.message);
             await stopFiller();
@@ -282,6 +287,42 @@ export default function AssistantScreen() {
             setStatus('idle');
         } finally {
             processingRef.current = false;
+        }
+    };
+
+    // ── Widget Action Handler ──
+    // When a user interacts with a widget (confirm, cancel, select, submit_form),
+    // send the action as a new chat message back to the agent.
+    const handleWidgetAction = (action: string, payload?: any) => {
+        let messageText = '';
+        switch (action) {
+            case 'confirm':
+                messageText = 'Yes, proceed.';
+                break;
+            case 'cancel':
+                messageText = 'No, cancel.';
+                break;
+            case 'select':
+                messageText = `Select ${payload}`;
+                break;
+            case 'submit_form':
+                // Convert form values to a natural language string or JSON
+                if (payload && typeof payload === 'object') {
+                    const entries = Object.entries(payload)
+                        .filter(([_, v]) => v)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(', ');
+                    messageText = entries || 'Submit form';
+                } else {
+                    messageText = String(payload || 'Submit');
+                }
+                break;
+            default:
+                messageText = payload ? String(payload) : action;
+        }
+
+        if (messageText) {
+            handleSendMessage(messageText);
         }
     };
 
@@ -400,7 +441,17 @@ export default function AssistantScreen() {
                     )}
                 </Animated.View>
 
-                {/* Render Action Cards below agent message */}
+                {/* Render Visual Widget below agent message */}
+                {!isUser && message.visual && (
+                    <View style={styles.widgetContainer}>
+                        <VisualStage
+                            visual={message.visual}
+                            onWidgetAction={handleWidgetAction}
+                        />
+                    </View>
+                )}
+
+                {/* Render Legacy Action Cards below agent message */}
                 {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
                     <View style={styles.actionCardsContainer}>
                         {message.toolCalls.map((tc, i) => (
@@ -695,6 +746,12 @@ const styles = StyleSheet.create({
         flex: 1,
         flexShrink: 1,
     },
+    widgetContainer: {
+        paddingLeft: 16,
+        paddingRight: 16,
+        marginTop: 6,
+        marginBottom: 4,
+    },
     actionCardsContainer: {
         paddingLeft: 32,
         paddingRight: 16,
@@ -772,4 +829,3 @@ const styles = StyleSheet.create({
         backgroundColor: '#EF4444',
     },
 });
-

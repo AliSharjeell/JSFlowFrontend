@@ -17,10 +17,51 @@ export interface ToolCall {
     result: any;
 }
 
+// ── Visual Widget Types ──────────────────────────────────────
+
+export type VisualWidgetType =
+    | 'COMPOSITE_FORM'
+    | 'CONFIRMATION_CARD'
+    | 'SELECTION_LIST'
+    | 'INFO_TABLE'
+    | 'TEXT_BUBBLE';
+
+export type VisualState = 'initial' | 'submitted' | 'processing' | 'success' | 'error';
+
+export interface VisualPayload {
+    type: VisualWidgetType;
+    state: VisualState;
+    data: any;
+}
+
+// ── Chat Response (dual-channel: voice + visual) ─────────────
+
 export interface ChatResponse {
-    answer: string;
-    classification: string;
+    // New dual-channel format
+    voice?: string;
+    visual?: VisualPayload;
+    // Legacy format (backward compat)
+    answer?: string;
+    classification?: string;
     tool_calls?: ToolCall[];
+}
+
+/**
+ * Extracts the voice text from a ChatResponse, falling back to legacy `answer`.
+ */
+export function getVoiceText(response: ChatResponse): string {
+    return response.voice || response.answer || "I'm sorry, I couldn't process that.";
+}
+
+/**
+ * Extracts the display text — same as voice text but can be overridden for richer display.
+ */
+export function getDisplayText(response: ChatResponse): string {
+    // If it's a plain TEXT_BUBBLE, use the markdown from visual data
+    if (response.visual?.type === 'TEXT_BUBBLE' && response.visual.data?.markdown) {
+        return response.visual.data.markdown;
+    }
+    return response.voice || response.answer || "I'm sorry, I couldn't process that.";
 }
 
 export const AgentService = {
@@ -28,9 +69,30 @@ export const AgentService = {
         try {
             const response = await api.post<ChatResponse>('/chat', {
                 question: message,
-                thread_id: threadId,
+                thread_id: "user_session_187",
             });
-            return response.data;
+
+            const data = response.data;
+
+            // ── Dynamic Parsing Fix ──
+            // If the backend returns the new format stringified inside 'answer'
+            if (!data.voice && !data.visual && data.answer) {
+                try {
+                    const parsed = JSON.parse(data.answer);
+                    if (parsed.voice || parsed.visual) {
+                        data.voice = parsed.voice;
+                        data.visual = parsed.visual;
+                        // Optionally clear answer to avoid duplicate text, 
+                        // but keeping it might be safer for legacy fallbacks 
+                        // if voice is empty.
+                        if (parsed.voice) data.answer = parsed.voice;
+                    }
+                } catch (e) {
+                    // Not JSON, just normal text. Ignore.
+                }
+            }
+
+            return data;
         } catch (error) {
             //console.error('Agent API Error:', error);
             throw error;
